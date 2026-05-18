@@ -12,9 +12,15 @@ pipeline {
     stage('Build') {
         steps {
             echo 'Eyyyy, esto es Python. No hay que compilar nada!!!'
-	    echo WORKSPACE
-	    bat 'dir'
-        }
+		    echo WORKSPACE
+			script {
+				if (isUnix()) {
+	                sh 'ls -la'
+	            } else {
+	                bat 'dir'
+	            }
+			}
+		}
     }
 
     stage('Tests')
