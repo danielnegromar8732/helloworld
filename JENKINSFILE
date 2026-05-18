@@ -71,7 +71,7 @@ pipeline {
                         always {
                             // Publicar hallazgos con recordIssues + bandit parser
                             recordIssues(
-                                tools: [bandit(pattern: 'bandit.out')],
+                                tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')],
                                 qualityGates: [
                                     [threshold: 2, type: 'TOTAL', unstable: true],
                                     [threshold: 4, type: 'TOTAL', unstable: false]
