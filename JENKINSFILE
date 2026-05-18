@@ -1,7 +1,6 @@
 pipeline {
     agent { label 'windows' }
-
-     stages {
+    stages {
         stage('Get Code') {
             steps {
                 // Obtener código del repo
@@ -9,54 +8,123 @@ pipeline {
             }
         }
 
-    stage('Build') {
-        steps {
-            echo 'Eyyyy, esto es Python. No hay que compilar nada!!!'
-		    echo WORKSPACE
-			script {
-				if (isUnix()) {
-	                sh 'ls -la'
-	            } else {
-	                bat 'dir'
-	            }
-			}
-		}
-    }
+        stage('Unit') {
+            steps {
+                // Ejecutar pruebas unitarias con pytest
+                // Generar JUnit XML y coverage.xml
+                // NO repetir esta etapa en ningún otro lugar
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    bat '''
+                        set PYTHONPATH=%WORKSPACE%
+                        pytest --junitxml=result-unit.xml test\\unit
+                    '''
+                }
+            }
+        }
 
-    stage('Tests')
-    {
-        parallel {
-
-            stage('Unit') {
-                steps {
-                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+        stage('Parallel Tests & Analysis') {
+            parallel {
+                stage('Rest') {
+                    steps {
                         bat '''
-                                set PYTHONPATH=%WORKSPACE%
-                                pytest --junitxml=result-unit.xml test\\unit
+                            set FLASK_APP=app\\api.py
+                            set FLASK_ENV=development
+                            start flask run
+                            start java -jar C:\\Users\\Dane\\Projects\\UNIR\\wiremock\\wiremock-standalone-3.13.2.jar --port 9090 --root-dir test\\wiremock
+                            set PYTHONPATH=%WORKSPACE%
+                            pytest --junitxml=result-rest.xml test\\rest
                         '''
                     }
                 }
+
+                stage('Static') {
+                    steps {
+                        // Ejecutar flake8 sobre app/ y test/
+                        // Generar reporte en formato JUnit XML
+                        bat '''
+                            flake8 app --exit-zero --output-file=flake8.out
+                        '''
+                    }
+                    post {
+                        always {
+                            // Publicar hallazgos con recordIssues + flake8 parser
+                            recordIssues(
+                                tools: [flake8(pattern: 'flake8.out')], 
+                                qualityGates: [
+                                    [threshold: 10, type: 'TOTAL', unstable: true], 
+                                    [threshold: 11, type: 'TOTAL', unstable: true]
+                                ]
+                            )
+                        }
+                    }
+                }
+
+                stage('Security') {
+                    steps {
+                        // Ejecutar bandit sobre app/
+                        // Generar reporte en formato XML
+                        bat '''
+                            bandit --exit-zero -r app -f json -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                        '''
+                    }
+                    post {
+                        always {
+                            // Publicar hallazgos con recordIssues + bandit parser
+                            recordIssues(
+                                tools: [bandit(pattern: 'bandit.out')],
+                                qualityGates: [
+                                    [threshold: 2, type: 'TOTAL', unstable: true],
+                                    [threshold: 4, type: 'TOTAL', unstable: false]
+                                ]
+                            )
+                        }
+                    }
+                }
+
+                stage('Performance') {
+                    steps {
+                        // Levantar Flask en background
+                        // Esperar a que el servicio esté listo
+                        // Ejecutar JMeter con test/jmeter/flask.jmx
+                        bat '''
+                            set FLASK_APP=app\\api.py
+                            start flask run   
+                            ping -n 5 127.0.0.1 
+                            C:\\Users\\Dane\\Projects\\UNIR\\apache-jmeter-5.6.3\\bin\\jmeter.bat -n -t test\\jmeter\\flask.jmx -l flask.jtl
+                        '''
+                    }
+                    post {
+                        always {
+                            // Publicar métricas con perfReport
+                            perfReport sourceDataFiles: 'flask.jtl'
+                            // TODO: Matar proceso Flask si quedó activo
+                        }
+                    }
+                }
             }
-            
-            stage('Rest') {
-                steps {
-                    bat '''
-                        set FLASK_APP=app\\api.py
-                        set FLASK_ENV=development
-                        start flask run
-                        start java -jar C:\\Users\\Dane\\Projects\\UNIR\\wiremock\\wiremock-standalone-3.13.2.jar --port 9090 --root-dir test\\wiremock
-                        set PYTHONPATH=%WORKSPACE%
-                        pytest --junitxml=result-rest.xml test\\rest
-                    '''
-                }    
-            }    
         }
-    }
-    
-    stage ('Results') {
-        steps {
-            junit 'result*.xml'
+
+        stage('Coverage') {
+            steps {
+                // Publicar reporte de cobertura desde coverage.xml
+                bat '''
+                    coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest test\\unit
+                    coverage xml -o coverage.xml
+                '''
+                // Configurar quality gates si se requiere
+                recordCoverage(
+                    tools: [
+                        [parser: 'COBERTURA', pattern: 'coverage.xml']
+                    ],
+                    qualityGates: [
+                        // Cobertura de líneas
+                        [criticality: 'ERROR',    metric: 'LINE',   threshold: 85.0],
+                        [criticality: 'UNSTABLE', metric: 'LINE',   threshold: 90.0],
+
+                        // Cobertura de ramas
+                        [criticality: 'ERROR',    metric: 'BRANCH', threshold: 80.0],
+                        [criticality: 'UNSTABLE', metric: 'BRANCH', threshold: 90.0]
+                    ]
+                )
+            }
         }
-    }
-  }
-}
