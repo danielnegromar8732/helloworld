@@ -64,7 +64,7 @@ pipeline {
                         // Ejecutar bandit sobre app/
                         // Generar reporte en formato XML
                         bat '''
-                            bandit --exit-zero -r app -f json -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                            bandit --exit-zero -r app -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                         '''
                     }
                     post {
